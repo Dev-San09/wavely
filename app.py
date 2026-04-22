@@ -1228,7 +1228,7 @@ def yt_stream(video_id):
         ]
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
         if result.returncode != 0:
-            log.info(f"[STREAM] âŒ yt-dlp failed (code {result.returncode})")
+            log.error(f"[STREAM] yt-dlp failed (code {result.returncode}): {result.stderr[:500]}")
             return jsonify({"error": "Could not extract audio"}), 500
 
         data = json.loads(result.stdout)
