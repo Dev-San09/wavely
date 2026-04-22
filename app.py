@@ -842,7 +842,8 @@ def _prefetch_stream(video_id):
         return
     try:
         cmd = ["yt-dlp", f"https://www.youtube.com/watch?v={video_id}",
-               "--dump-json", "--no-warnings", "--quiet"]
+               "--dump-json", "--no-warnings", "--quiet",
+               "--extractor-args", "youtube:player_client=web_creator"]
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
         if result.returncode != 0:
             return
@@ -899,7 +900,7 @@ def _find_song_id(video_id):
         if not title:
             try:
                 cmd = ["yt-dlp", f"https://www.youtube.com/watch?v={video_id}",
-                       "--print", "%(title)s|||%(channel)s", "--no-warnings", "--quiet"]
+                       "--print", "%(title)s|||%(channel)s", "--no-warnings", "--quiet", "--extractor-args", "youtube:player_client=web_creator"]
                 r = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
                 if r.returncode == 0 and r.stdout.strip():
                     parts = r.stdout.strip().split("|||")
@@ -1387,6 +1388,7 @@ def search_youtube(query):
             f"ytsearch20:{query} song",
             "--dump-json", "--flat-playlist",
             "--no-warnings", "--quiet",
+            "--extractor-args", "youtube:player_client=web_creator",
         ]
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=20)
         if result.returncode != 0:
