@@ -36,6 +36,16 @@ _file_lock = threading.Lock()  # Thread-safe file operations
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
+COOKIES_FILE = os.path.join(BASE_DIR, "cookies.txt")
+
+def _ytdlp_cmd(args):
+    """Build yt-dlp command with cookies and extractor args."""
+    cmd = ["yt-dlp"] + args + ["--extractor-args", "youtube:player_client=web_creator"]
+    if os.path.exists(COOKIES_FILE):
+        cmd += ["--cookies", COOKIES_FILE]
+    return cmd
+
+
 os.makedirs(DATA_DIR, exist_ok=True)
 
 OAUTH_FILE = os.path.join(DATA_DIR, "oauth.json")
@@ -841,9 +851,7 @@ def _prefetch_stream(video_id):
     if video_id in _stream_cache:
         return
     try:
-        cmd = ["yt-dlp", f"https://www.youtube.com/watch?v={video_id}",
-               "--dump-json", "--no-warnings", "--quiet",
-               "--extractor-args", "youtube:player_client=web_creator"]
+        cmd = _ytdlp_cmd([f"https://www.youtube.com/watch?v={video_id}", "--dump-json", "--no-warnings", "--quiet"])
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
         if result.returncode != 0:
             return
@@ -899,8 +907,7 @@ def _find_song_id(video_id):
 
         if not title:
             try:
-                cmd = ["yt-dlp", f"https://www.youtube.com/watch?v={video_id}",
-                       "--print", "%(title)s|||%(channel)s", "--no-warnings", "--quiet", "--extractor-args", "youtube:player_client=web_creator"]
+                cmd = _ytdlp_cmd([f"https://www.youtube.com/watch?v={video_id}", "--print", "%(title)s|||%(channel)s", "--no-warnings", "--quiet"])
                 r = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
                 if r.returncode == 0 and r.stdout.strip():
                     parts = r.stdout.strip().split("|||")
