@@ -1,4 +1,4 @@
-﻿ """
+﻿"""
 Wavely - Free Open Source Music Streaming Application
 Source: YouTube via yt-dlp + ytmusicapi
 License: MIT
