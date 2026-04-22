@@ -1,0 +1,10 @@
+{
+  "name": "Wavely",
+  "short_name": "Wavely",
+  "description": "Free music streaming powered by YouTube Music",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#050510",
+  "theme_color": "#1ed760",
+  "orientation": "any"
+}

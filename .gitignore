@@ -1,0 +1,32 @@
+# User data (created at runtime)
+data/history.json
+data/likes.json
+data/playlists.json
+data/preferences.json
+data/oauth.json
+data/oauth_creds.json
+data/browser.json
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+.env
+venv/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Media
+*.mp4
+*.mp3
+*.wav
+Recording*
