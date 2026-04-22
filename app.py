@@ -40,9 +40,12 @@ COOKIES_FILE = os.path.join(BASE_DIR, "cookies.txt")
 
 def _ytdlp_cmd(args):
     """Build yt-dlp command with cookies and extractor args."""
-    cmd = ["yt-dlp"] + args + ["--extractor-args", "youtube:player_client=web_creator"]
+    cmd = ["yt-dlp"] + args + ["--extractor-args", "youtube:player_client=web_creator,default"]
     if os.path.exists(COOKIES_FILE):
         cmd += ["--cookies", COOKIES_FILE]
+        log.info(f"[YTDLP] Using cookies from {COOKIES_FILE}")
+    else:
+        log.warning(f"[YTDLP] No cookies file at {COOKIES_FILE}")
     return cmd
 
 
@@ -1033,12 +1036,12 @@ def _fetch_mix_fallback(video_id):
     try:
         url = f"https://www.youtube.com/watch?v={video_id}&list=RDAMVM{video_id}"
         log.info(f"[RECS] Fallback URL: {url}")
-        cmd = [
-            "yt-dlp", url,
+        cmd = _ytdlp_cmd([
+            url,
             "--flat-playlist", "--dump-json",
             "--no-warnings", "--quiet",
             "--playlist-end", "25",
-        ]
+        ])
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
         results = []
         if result.returncode != 0 or not result.stdout.strip():
@@ -1229,11 +1232,10 @@ def yt_stream(video_id):
         return jsonify(_stream_cache[video_id])
 
     try:
-        cmd = [
-            "yt-dlp",
+        cmd = _ytdlp_cmd([
             f"https://www.youtube.com/watch?v={video_id}",
             "--dump-json", "--no-warnings", "--quiet",
-        ]
+        ])
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
         if result.returncode != 0:
             log.error(f"[STREAM] yt-dlp failed (code {result.returncode}): {result.stderr[:500]}")
@@ -1390,13 +1392,11 @@ def search_ytmusic(query):
 def search_youtube(query):
     """Search YouTube via yt-dlp. No API key needed."""
     try:
-        cmd = [
-            "yt-dlp",
+        cmd = _ytdlp_cmd([
             f"ytsearch20:{query} song",
             "--dump-json", "--flat-playlist",
             "--no-warnings", "--quiet",
-            "--extractor-args", "youtube:player_client=web_creator",
-        ]
+        ])
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=20)
         if result.returncode != 0:
             return []
@@ -1438,6 +1438,10 @@ if __name__ == "__main__":
         log.info(f"yt-dlp {yt_dlp.version.__version__}")
     except ImportError:
         log.error("yt-dlp not found! Run: pip install yt-dlp")
+    if os.path.exists(COOKIES_FILE):
+        log.info(f"Cookies: {COOKIES_FILE} (found)")
+    else:
+        log.warning(f"Cookies: {COOKIES_FILE} (NOT FOUND - YouTube may block requests)")
     log.info(f"Data directory: {DATA_DIR}")
     log.info(f"Open http://localhost:{PORT}")
     log.info("=" * 40)
