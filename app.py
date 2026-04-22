@@ -1,4 +1,4 @@
-﻿"""
+﻿ """
 Wavely - Free Open Source Music Streaming Application
 Source: YouTube via yt-dlp + ytmusicapi
 License: MIT
@@ -47,6 +47,115 @@ def _ytdlp_cmd(args):
     else:
         log.warning(f"[YTDLP] No cookies file at {COOKIES_FILE}")
     return cmd
+
+
+# ── Piped / Invidious API fallback (when yt-dlp is blocked on datacenter IPs) ──
+
+PIPED_INSTANCES = [
+    "https://pipedapi.kavin.rocks",
+    "https://api.piped.private.coffee",
+    "https://pipedapi.adminforge.de",
+    "https://pipedapi.in.projectsegfau.lt",
+]
+
+INVIDIOUS_INSTANCES = [
+    "https://inv.nadeko.net",
+    "https://invidious.nerdvpn.de",
+    "https://invidious.privacyredirect.com",
+    "https://invidious.materialio.us",
+]
+
+
+def _get_stream_from_piped(video_id):
+    """Fallback: get audio stream URL from Piped API instances."""
+    for instance in PIPED_INSTANCES:
+        try:
+            url = f"{instance}/streams/{video_id}"
+            resp = http_req.get(url, timeout=12, headers={"User-Agent": "Mozilla/5.0"})
+            if resp.status_code != 200:
+                log.warning(f"[PIPED] {instance} returned {resp.status_code}")
+                continue
+            data = resp.json()
+            if data.get("error"):
+                log.warning(f"[PIPED] {instance} error: {data['error']}")
+                continue
+            audio_streams = data.get("audioStreams", [])
+            if not audio_streams:
+                log.warning(f"[PIPED] {instance} returned no audio streams")
+                continue
+            # Pick highest bitrate audio stream
+            audio_streams.sort(key=lambda x: x.get("bitrate", 0), reverse=True)
+            best = audio_streams[0]
+            stream_url = best.get("url", "")
+            if not stream_url:
+                continue
+            log.info(f"[PIPED] Got stream from {instance} ({best.get('quality', '?')})")
+            return {
+                "stream_url": stream_url,
+                "video_id": video_id,
+                "title": data.get("title", "Unknown"),
+                "artist": data.get("uploader", "Unknown"),
+                "duration": data.get("duration", 0),
+                "image": data.get("thumbnailUrl", ""),
+            }
+        except Exception as e:
+            log.warning(f"[PIPED] {instance} failed: {e}")
+            continue
+    return None
+
+
+def _get_stream_from_invidious(video_id):
+    """Fallback: get audio stream URL from Invidious API instances."""
+    for instance in INVIDIOUS_INSTANCES:
+        try:
+            url = f"{instance}/api/v1/videos/{video_id}"
+            resp = http_req.get(url, timeout=12, headers={"User-Agent": "Mozilla/5.0"})
+            if resp.status_code != 200:
+                log.warning(f"[INVIDIOUS] {instance} returned {resp.status_code}")
+                continue
+            data = resp.json()
+            if data.get("error"):
+                log.warning(f"[INVIDIOUS] {instance} error: {data['error']}")
+                continue
+            # adaptiveFormats contains audio-only streams
+            formats = data.get("adaptiveFormats", [])
+            audio_formats = [f for f in formats if f.get("type", "").startswith("audio/")]
+            if not audio_formats:
+                log.warning(f"[INVIDIOUS] {instance} returned no audio formats")
+                continue
+            # Pick highest bitrate
+            audio_formats.sort(key=lambda x: int(x.get("bitrate", "0") if x.get("bitrate") else 0), reverse=True)
+            best = audio_formats[0]
+            stream_url = best.get("url", "")
+            if not stream_url:
+                continue
+            log.info(f"[INVIDIOUS] Got stream from {instance} ({best.get('type', '?')})")
+            return {
+                "stream_url": stream_url,
+                "video_id": video_id,
+                "title": data.get("title", "Unknown"),
+                "artist": data.get("author", "Unknown"),
+                "duration": data.get("lengthSeconds", 0),
+                "image": data.get("videoThumbnails", [{}])[-1].get("url", "") if data.get("videoThumbnails") else "",
+            }
+        except Exception as e:
+            log.warning(f"[INVIDIOUS] {instance} failed: {e}")
+            continue
+    return None
+
+
+def _get_stream_fallback(video_id):
+    """Try Piped first, then Invidious as fallback for stream extraction."""
+    log.info(f"[FALLBACK] Trying Piped API for {video_id}...")
+    result = _get_stream_from_piped(video_id)
+    if result:
+        return result
+    log.info(f"[FALLBACK] Piped failed, trying Invidious API for {video_id}...")
+    result = _get_stream_from_invidious(video_id)
+    if result:
+        return result
+    log.error(f"[FALLBACK] All fallbacks failed for {video_id}")
+    return None
 
 
 os.makedirs(DATA_DIR, exist_ok=True)
@@ -857,6 +966,13 @@ def _prefetch_stream(video_id):
         cmd = _ytdlp_cmd([f"https://www.youtube.com/watch?v={video_id}", "--dump-json", "--no-warnings", "--quiet"])
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
         if result.returncode != 0:
+            # yt-dlp failed, try Piped/Invidious fallback
+            fallback = _get_stream_fallback(video_id)
+            if fallback:
+                if len(_stream_cache) >= CACHE_MAX:
+                    _stream_cache.pop(next(iter(_stream_cache)))
+                _stream_cache[video_id] = fallback
+                log.info(f"[PREFETCH] Cached via fallback: {fallback.get('title', video_id)}")
             return
         data = json.loads(result.stdout)
         audio_url = None
@@ -1238,7 +1354,14 @@ def yt_stream(video_id):
         ])
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
         if result.returncode != 0:
-            log.error(f"[STREAM] yt-dlp failed (code {result.returncode}): {result.stderr[:500]}")
+            log.error(f"[STREAM] yt-dlp failed (code {result.returncode}): {result.stderr[:200]}")
+            # Fallback to Piped/Invidious API
+            fallback = _get_stream_fallback(video_id)
+            if fallback:
+                if len(_stream_cache) >= CACHE_MAX:
+                    _stream_cache.pop(next(iter(_stream_cache)))
+                _stream_cache[video_id] = fallback
+                return jsonify(fallback)
             return jsonify({"error": "Could not extract audio"}), 500
 
         data = json.loads(result.stdout)
@@ -1288,14 +1411,25 @@ def yt_stream(video_id):
 
         return jsonify(response)
     except subprocess.TimeoutExpired:
-        log.info(f"[STREAM] âŒ Timeout")
+        log.info(f"[STREAM] Timeout, trying fallback...")
+        fallback = _get_stream_fallback(video_id)
+        if fallback:
+            if len(_stream_cache) >= CACHE_MAX:
+                _stream_cache.pop(next(iter(_stream_cache)))
+            _stream_cache[video_id] = fallback
+            return jsonify(fallback)
         return jsonify({"error": "Timeout extracting audio"}), 504
     except Exception as e:
-        log.info(f"[STREAM] âŒ Error: {e}")
+        log.info(f"[STREAM] Error: {e}, trying fallback...")
+        fallback = _get_stream_fallback(video_id)
+        if fallback:
+            if len(_stream_cache) >= CACHE_MAX:
+                _stream_cache.pop(next(iter(_stream_cache)))
+            _stream_cache[video_id] = fallback
+            return jsonify(fallback)
         return jsonify({"error": str(e)}), 500
 
 
-@app.route("/api/yt/proxy/<video_id>")
 def yt_proxy(video_id):
     """Stream audio from YouTube CDN through our server â€” enables instant playback."""
     info = _audio_urls.get(video_id)
