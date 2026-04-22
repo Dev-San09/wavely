@@ -864,7 +864,7 @@ def _prefetch_stream(video_id):
         _evict_audio_cache()
         _audio_urls[canonical_id] = {"url": audio_url, "content_type": content_type, "ts": time.time()}
         resp = {
-            "stream_url": f"/api/yt/proxy/{canonical_id}",
+            "stream_url": audio_url,
             "video_id": canonical_id,
             "title": data.get("title", "Unknown"),
             "artist": data.get("channel", data.get("uploader", "Unknown")),
@@ -1264,7 +1264,7 @@ def yt_stream(video_id):
         _audio_urls[canonical_id] = {"url": audio_url, "content_type": content_type, "ts": time.time()}
 
         response = {
-            "stream_url": f"/api/yt/proxy/{canonical_id}",
+            "stream_url": audio_url,
             "video_id": canonical_id,
             "title": title,
             "artist": artist,
