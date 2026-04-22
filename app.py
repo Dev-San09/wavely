@@ -49,57 +49,64 @@ def _ytdlp_cmd(args):
     return cmd
 
 
-# ── Piped / Invidious API fallback (when yt-dlp is blocked on datacenter IPs) ──
+# ── Cobalt API fallback (when yt-dlp is blocked on datacenter IPs) ──
+# Community cobalt instances that support YouTube audio extraction.
+# These are fetched dynamically but we keep a static list as bootstrap.
 
-PIPED_INSTANCES = [
-    "https://pipedapi.kavin.rocks",
-    "https://api.piped.private.coffee",
-    "https://pipedapi.adminforge.de",
-    "https://pipedapi.in.projectsegfau.lt",
+COBALT_INSTANCES = [
+    "https://cobalt-api.meowing.de",
+    "https://cobalt-backend.canine.tools",
+    "https://capi.3kh0.net",
 ]
 
+# Invidious API-enabled instance (only one currently has api:true)
 INVIDIOUS_INSTANCES = [
-    "https://inv.nadeko.net",
-    "https://invidious.nerdvpn.de",
-    "https://invidious.privacyredirect.com",
-    "https://invidious.materialio.us",
+    "https://inv.thepixora.com",
 ]
 
 
-def _get_stream_from_piped(video_id):
-    """Fallback: get audio stream URL from Piped API instances."""
-    for instance in PIPED_INSTANCES:
+def _get_stream_from_cobalt(video_id):
+    """Get audio stream URL from Cobalt API instances (best fallback for YouTube)."""
+    yt_url = f"https://www.youtube.com/watch?v={video_id}"
+    headers = {
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+        "User-Agent": "wavely/1.0 (+https://github.com/Dev-San09/wavely)",
+    }
+    payload = {
+        "url": yt_url,
+        "downloadMode": "audio",
+        "audioFormat": "mp3",
+        "audioBitrate": "128",
+    }
+    for instance in COBALT_INSTANCES:
         try:
-            url = f"{instance}/streams/{video_id}"
-            resp = http_req.get(url, timeout=12, headers={"User-Agent": "Mozilla/5.0"})
+            resp = http_req.post(instance, json=payload, headers=headers, timeout=15)
             if resp.status_code != 200:
-                log.warning(f"[PIPED] {instance} returned {resp.status_code}")
+                log.warning(f"[COBALT] {instance} returned {resp.status_code}")
                 continue
             data = resp.json()
-            if data.get("error"):
-                log.warning(f"[PIPED] {instance} error: {data['error']}")
+            status = data.get("status", "")
+            if status == "error":
+                err = data.get("error", {})
+                log.warning(f"[COBALT] {instance} error: {err.get('code', 'unknown')}")
                 continue
-            audio_streams = data.get("audioStreams", [])
-            if not audio_streams:
-                log.warning(f"[PIPED] {instance} returned no audio streams")
-                continue
-            # Pick highest bitrate audio stream
-            audio_streams.sort(key=lambda x: x.get("bitrate", 0), reverse=True)
-            best = audio_streams[0]
-            stream_url = best.get("url", "")
+            # tunnel or redirect response contains a URL
+            stream_url = data.get("url", "")
             if not stream_url:
+                log.warning(f"[COBALT] {instance} no URL in response (status={status})")
                 continue
-            log.info(f"[PIPED] Got stream from {instance} ({best.get('quality', '?')})")
+            log.info(f"[COBALT] Got stream from {instance} (status={status})")
             return {
                 "stream_url": stream_url,
                 "video_id": video_id,
-                "title": data.get("title", "Unknown"),
-                "artist": data.get("uploader", "Unknown"),
-                "duration": data.get("duration", 0),
-                "image": data.get("thumbnailUrl", ""),
+                "title": data.get("filename", "Unknown").rsplit(".", 1)[0],
+                "artist": "Unknown",
+                "duration": 0,
+                "image": f"https://i.ytimg.com/vi/{video_id}/hqdefault.jpg",
             }
         except Exception as e:
-            log.warning(f"[PIPED] {instance} failed: {e}")
+            log.warning(f"[COBALT] {instance} failed: {e}")
             continue
     return None
 
@@ -117,19 +124,17 @@ def _get_stream_from_invidious(video_id):
             if data.get("error"):
                 log.warning(f"[INVIDIOUS] {instance} error: {data['error']}")
                 continue
-            # adaptiveFormats contains audio-only streams
             formats = data.get("adaptiveFormats", [])
             audio_formats = [f for f in formats if f.get("type", "").startswith("audio/")]
             if not audio_formats:
                 log.warning(f"[INVIDIOUS] {instance} returned no audio formats")
                 continue
-            # Pick highest bitrate
             audio_formats.sort(key=lambda x: int(x.get("bitrate", "0") if x.get("bitrate") else 0), reverse=True)
             best = audio_formats[0]
             stream_url = best.get("url", "")
             if not stream_url:
                 continue
-            log.info(f"[INVIDIOUS] Got stream from {instance} ({best.get('type', '?')})")
+            log.info(f"[INVIDIOUS] Got stream from {instance}")
             return {
                 "stream_url": stream_url,
                 "video_id": video_id,
@@ -145,12 +150,12 @@ def _get_stream_from_invidious(video_id):
 
 
 def _get_stream_fallback(video_id):
-    """Try Piped first, then Invidious as fallback for stream extraction."""
-    log.info(f"[FALLBACK] Trying Piped API for {video_id}...")
-    result = _get_stream_from_piped(video_id)
+    """Try Cobalt API first, then Invidious as last resort."""
+    log.info(f"[FALLBACK] Trying Cobalt API for {video_id}...")
+    result = _get_stream_from_cobalt(video_id)
     if result:
         return result
-    log.info(f"[FALLBACK] Piped failed, trying Invidious API for {video_id}...")
+    log.info(f"[FALLBACK] Cobalt failed, trying Invidious for {video_id}...")
     result = _get_stream_from_invidious(video_id)
     if result:
         return result
